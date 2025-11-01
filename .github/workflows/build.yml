@@ -1,0 +1,170 @@
+name: Build NodCatFTP
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  release:
+    types: [ published ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-windows:
+    name: Build Windows Executable
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+        architecture: 'x64'
+
+    - name: Display Python version
+      run: |
+        python --version
+        python -c "import sys; print(f'Architecture: {sys.platform}')"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        # 安装构建工具
+        pip install pyinstaller
+        # 如果有requirements.txt就安装
+        if (Test-Path "requirements.txt") { pip install -r requirements.txt }
+        # 安装常见的FTP相关依赖
+        pip install pyftpdlib flask requests
+
+    - name: Find main Python script
+      id: find_main
+      run: |
+        $files = @("main.py", "app.py", "server.py", "NodCatFTP.py", "run.py", "start.py", "ftp_server.py", "ftp_client.py")
+        foreach ($file in $files) {
+          if (Test-Path $file) {
+            Write-Output "Found main script: $file"
+            echo "MAIN_SCRIPT=$file" >> $env:GITHUB_OUTPUT
+            break
+          }
+        }
+        if (-not (Test-Path variable:MAIN_SCRIPT)) {
+          # 如果没有找到标准名称，查找第一个合适的py文件
+          $pyFiles = Get-ChildItem -Filter "*.py" | Where-Object { $_.Name -notlike "test*" -and $_.Name -notlike "setup*" }
+          if ($pyFiles.Count -gt 0) {
+            $mainFile = $pyFiles[0].Name
+            Write-Output "Using first Python file: $mainFile"
+            echo "MAIN_SCRIPT=$mainFile" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Output "No Python files found!"
+            exit 1
+          }
+        }
+
+    - name: Build with PyInstaller
+      run: |
+        echo "Building ${{ steps.find_main.outputs.MAIN_SCRIPT }}"
+        pyinstaller --onefile --console --name=NodCatFTP --clean "${{ steps.find_main.outputs.MAIN_SCRIPT }}"
+
+    - name: Test the executable
+      run: |
+        if (Test-Path "dist\NodCatFTP.exe") {
+          echo "✅ Executable built successfully"
+          # 测试是否可以运行（不实际启动服务）
+          .\dist\NodCatFTP.exe --version || .\dist\NodCatFTP.exe --help || echo "Executable runs but may not have version/help commands"
+        } else {
+          echo "❌ Executable not found"
+          exit 1
+        }
+
+    - name: Upload executable artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: NodCatFTP-Windows
+        path: dist/NodCatFTP.exe
+        retention-days: 30
+
+  build-linux:
+    name: Build Linux Executable
+    runs-on: ubuntu-latest
+    if: false  # 默认禁用，如需启用改为 true
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if [ -f "requirements.txt" ]; then pip install -r requirements.txt; fi
+        pip install pyftpdlib flask requests
+
+    - name: Find main Python script
+      id: find_main_linux
+      run: |
+        files=("main.py" "app.py" "server.py" "NodCatFTP.py" "run.py" "start.py" "ftp_server.py" "ftp_client.py")
+        for file in "${files[@]}"; do
+          if [ -f "$file" ]; then
+            echo "Found main script: $file"
+            echo "MAIN_SCRIPT=$file" >> $GITHUB_OUTPUT
+            break
+          fi
+        done
+        
+        if [ -z "$MAIN_SCRIPT" ]; then
+          # 如果没有找到标准名称，使用第一个非测试的py文件
+          first_py=$(find . -maxdepth 1 -name "*.py" ! -name "test*" ! -name "setup*" | head -n1)
+          if [ -n "$first_py" ]; then
+            main_file=$(basename "$first_py")
+            echo "Using first Python file: $main_file"
+            echo "MAIN_SCRIPT=$main_file" >> $GITHUB_OUTPUT
+          else
+            echo "No Python files found!"
+            exit 1
+          fi
+        fi
+
+    - name: Build with PyInstaller
+      run: |
+        echo "Building ${{ steps.find_main_linux.outputs.MAIN_SCRIPT }}"
+        pyinstaller --onefile --console --name=NodCatFTP --clean "${{ steps.find_main_linux.outputs.MAIN_SCRIPT }}"
+
+    - name: Upload Linux executable artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: NodCatFTP-Linux
+        path: dist/NodCatFTP
+        retention-days: 30
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-windows]  # 也可以加上 build-linux
+    if: github.event_name == 'release' && github.event.action == 'published'
+    
+    steps:
+    - name: Download Windows artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: NodCatFTP-Windows
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          NodCatFTP.exe
+        body: |
+          Automated build of NodCatFTP
+          
+          **Build Information:**
+          - Commit: ${{ github.sha }}
+          - Trigger: ${{ github.event_name }}
+          - Date: ${{ github.event.release.published_at }}
