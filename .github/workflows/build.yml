@@ -1,52 +1,30 @@
-name: Build NodCatFTP
+name: Build Windows EXE
 
 on:
-  workflow_dispatch:  # 允许手动触发
   push:
-    branches: [ main, master ]
+    branches:
+      - main
   pull_request:
-    branches: [ main, master ]
 
 jobs:
   build:
-    runs-on: windows-latest  # 使用Windows环境
-
+    runs-on: windows-latest
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup MSBuild
-      uses: microsoft/setup-msbuild@v1.1.3
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
 
-    - name: Build Solution
-      run: |
-        # 构建主解决方案文件
-        msbuild NodCatFTP.sln /p:Configuration=Release /p:Platform="Any CPU" /p:OutputPath=bin\Release
+      - name: Build with MSVC
+        run: |
+          mkdir build
+          cd build
+          cmake ..
+          cmake --build . --config Release
 
-    - name: Create Artifacts Directory
-      run: |
-        mkdir artifacts
-        # 复制所有生成的文件到artifacts目录
-        copy "NodCatFTP\bin\Release\*.exe" "artifacts\" || echo "No exe files found"
-        copy "NodCatFTP\bin\Release\*.dll" "artifacts\" || echo "No dll files found"
-        copy "NodCatFTP\bin\Release\*.config" "artifacts\" || echo "No config files found"
-
-    - name: Upload Build Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: NodCatFTP-Build
-        path: artifacts/
-        retention-days: 7
-
-    - name: Create Single Executable Package
-      run: |
-        mkdir package
-        # 创建包含所有必要文件的zip包
-        Compress-Archive -Path "artifacts\*" -DestinationPath "package/NodCatFTP-Release-${{ github.sha }}.zip" -Force
-
-    - name: Upload Package Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: NodCatFTP-Package
-        path: package/
-        retention-days: 7
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: NodCatFTP_EXE
+          path: build/Release/*.exe
